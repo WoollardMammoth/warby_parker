@@ -1,0 +1,156 @@
+-- SECTION 1
+-- QUIZ FUNNEL
+
+-- Calculate the number of users who respond to each question of the survey.
+SELECT question, 
+       COUNT(DISTINCT user_id) as num_users
+FROM survey
+GROUP BY question
+ORDER BY question ASC;
+
+-- Calculate the percentage of users who respond to each question of the survey
+WITH q_funnel AS 
+(
+  SELECT question, 
+       COUNT(DISTINCT user_id) as num_users
+  FROM survey
+  GROUP BY question
+  ORDER BY question ASC
+)
+SELECT question,
+       (100.0*num_users) / LAG(num_users) 
+       OVER (ORDER BY question) 
+       AS perc_from_prev,
+       (100.0*num_users) / FIRST_VALUE(num_users) 
+       OVER (ORDER BY question) 
+       AS perc_from_start
+FROM q_funnel;
+
+-- SECTION 2
+-- PURCHASE FUNNEL
+
+-- Join together quiz, try_on_home, and purchase tables to work with the enitre purchase funnel
+SELECT quiz.user_id, 
+        home_try_on.user_id IS NOT NULL AS is_home_try_on,
+        home_try_on.number_of_pairs,
+        purchase.user_id IS NOT NULL AS is_purchase
+FROM quiz 
+LEFT JOIN home_try_on ON quiz.user_id = home_try_on.user_id
+LEFT JOIN purchase ON quiz.user_id = purchase.user_id
+LIMIT 10;
+
+-- Calculate the number of users who made it to each step in the purchase funnel
+WITH quiz_try_buy_funnel AS
+(
+  SELECT quiz.user_id, 
+        home_try_on.user_id IS NOT NULL AS is_home_try_on,
+        home_try_on.number_of_pairs,
+        purchase.user_id IS NOT NULL AS is_purchase
+  FROM quiz 
+  LEFT JOIN home_try_on ON quiz.user_id = home_try_on.user_id
+  LEFT JOIN purchase ON quiz.user_id = purchase.user_id
+)
+SELECT COUNT(user_id) as took_quiz,
+       SUM(is_home_try_on) as tried_on,
+       SUM(is_purchase) as made_purchase
+FROM quiz_try_buy_funnel;
+
+--Calculate the percentage of users who move from one step of the purchase funnel to the next.
+WITH counts_in_funnel AS
+(
+  WITH quiz_try_buy_funnel AS
+  (
+    SELECT quiz.user_id, 
+          home_try_on.user_id IS NOT NULL AS is_home_try_on,
+          home_try_on.number_of_pairs,
+          purchase.user_id IS NOT NULL AS is_purchase
+    FROM quiz 
+    LEFT JOIN home_try_on ON quiz.user_id = home_try_on.user_id
+    LEFT JOIN purchase ON quiz.user_id = purchase.user_id
+  )
+  -- Calculate the nmuber of users who made it to each step
+  SELECT COUNT(user_id) as took_quiz,
+        SUM(is_home_try_on) as tried_on,
+        SUM(is_purchase) as made_purchase
+  FROM quiz_try_buy_funnel
+)
+SELECT (100.0*tried_on)/took_quiz AS perc_quiz_to_try,
+       (100.0*made_purchase)/tried_on AS perc_try_to_buy
+FROM counts_in_funnel;
+
+-- Count the number of users on both sides of the A/B test.
+WITH quiz_try_buy_funnel AS
+(
+  SELECT quiz.user_id, 
+        home_try_on.user_id IS NOT NULL AS is_home_try_on,
+        home_try_on.number_of_pairs,
+        purchase.user_id IS NOT NULL AS is_purchase
+  FROM quiz 
+  LEFT JOIN home_try_on ON quiz.user_id = home_try_on.user_id
+  LEFT JOIN purchase ON quiz.user_id = purchase.user_id
+)
+SELECT SUM(is_home_try_on) as tried_on,
+       number_of_pairs,
+       SUM(is_purchase) as made_purchase
+FROM quiz_try_buy_funnel
+GROUP BY number_of_pairs
+HAVING SUM(is_home_try_on) > 0;
+
+
+-- SECTION 3
+-- USER AND STYLE PREFERENCES
+
+-- Counts and percentages of each style purchased.
+SELECT style, 
+       COUNT(user_id) AS num_purchased,
+       (100.0*COUNT(user_id))/(
+            SELECT COUNT(*) FROM purchase
+       ) AS perc_of_purchased
+FROM purchase
+GROUP BY style;
+
+-- Counts and percentages of each style stated as a preference.
+SELECT style,
+       COUNT(DISTINCT user_id) AS num_preferred,
+       (100.0*COUNT(user_id))/(
+            SELECT COUNT(*) FROM quiz
+       )AS perc_of_preferred
+FROM quiz
+GROUP BY style;
+
+--Join the quiz responses to the purchases made and group quiz preferences with purchase styles to see each combination.
+SELECT quiz.style AS quiz_preference, 
+       IFNULL(purchase.style, 'No Purchase') 
+                  AS style_purchased,
+       COUNT(*) AS num_users
+FROM quiz 
+LEFT JOIN purchase on quiz.user_id = purchase.user_id
+GROUP BY quiz.style, purchase.style
+
+
+SELECT shape, 
+       COUNT(user_id) AS num_preferred,
+       (100.0*COUNT(user_id))/(
+            SELECT COUNT(*) FROM quiz
+       ) AS perc_of_preferred
+FROM quiz
+GROUP BY shape;
+
+SELECT model_name, 
+      COUNT(user_id) AS num_purchased,
+      (100.0*COUNT(user_id))/(
+            SELECT COUNT(*) FROM purchase
+       ) AS perc_of_purchased 
+FROM purchase
+GROUP BY model_name;
+
+--Join the quiz responses to the purchases made and group quiz preferences with purchase styles to see each combination.
+SELECT quiz.shape AS quiz_preference, 
+       IFNULL(purchase.model_name, 'No Purchase') 
+                  AS model_purchased,
+       COUNT(*) AS num_users
+FROM quiz 
+LEFT JOIN purchase on quiz.user_id = purchase.user_id
+GROUP BY quiz.shape, purchase.model_name
+ORDER BY COUNT(*) DESC;
+
